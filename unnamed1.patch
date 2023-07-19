@@ -1,0 +1,183 @@
+Index: src/main/java/PageEntry.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/PageEntry.java b/src/main/java/PageEntry.java
+--- a/src/main/java/PageEntry.java	(revision 4283df5284fc88873b542ad36797317020560ca6)
++++ b/src/main/java/PageEntry.java	(date 1689807045145)
+@@ -1,7 +1,45 @@
++
++import org.codehaus.jettison.json.JSONException;
++import org.codehaus.jettison.json.JSONObject;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++
+ public class PageEntry implements Comparable<PageEntry> {
+     private final String pdfName;
+     private final int page;
+     private final int count;
+ 
+-    // ???
+-}
++    public PageEntry(String pdfName, int page, int count) {
++        this.pdfName = pdfName;
++        this.page = page;
++        this.count = count;
++    }
++
++    public int getCount() {
++        return count;
++    }
++
++    @Override
++    public int compareTo(PageEntry o) {
++        return Integer.compare(o.getCount(), this.getCount());
++    }
++
++    @Override
++    public String toString() {
++        Map map = new LinkedHashMap();
++        map.put("pdfName", pdfName);
++        map.put("page", page);
++        map.put("count", count);
++        JSONObject result = null;
++        try {
++            result = new JSONObject(map);
++        } catch (JSONException e) {
++            e.printStackTrace();
++        }
++        // Для работы с json мы используем библиотеку jettison.
++        // Эта библиотека использует LinkedHashMap, который поддерживает порядок атрибутов.
++        // Поэтому метод toString выводит атрибуты в том порядке, в котором они добавлялись изначально.
++        return result.toString();
++    }
++}
+\ No newline at end of file
+Index: src/main/java/BooleanSearchEngine.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/BooleanSearchEngine.java b/src/main/java/BooleanSearchEngine.java
+--- a/src/main/java/BooleanSearchEngine.java	(revision 4283df5284fc88873b542ad36797317020560ca6)
++++ b/src/main/java/BooleanSearchEngine.java	(date 1689807045150)
+@@ -1,18 +1,47 @@
++import com.itextpdf.kernel.pdf.PdfDocument;
++import com.itextpdf.kernel.pdf.PdfReader;
++import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
++
+ import java.io.File;
+ import java.io.IOException;
+ import java.util.*;
+ 
+ public class BooleanSearchEngine implements SearchEngine {
+-    //???
++    private final Map<String, List<PageEntry>> database = new HashMap<>();
+ 
+     public BooleanSearchEngine(File pdfsDir) throws IOException {
+-        // прочтите тут все pdf и сохраните нужные данные,
+-        // тк во время поиска сервер не должен уже читать файлы
++        for (File pdf : pdfsDir.listFiles()) {
++            var doc = new PdfDocument(new PdfReader(pdf));
++            int pageCount = doc.getNumberOfPages();
++            for (int i = 1; i <= pageCount; i++) {
++                var page = doc.getPage(i);
++                var text = PdfTextExtractor.getTextFromPage(page);
++                var words = text.split("\\P{IsAlphabetic}+");
++                Map<String, Integer> freqs = new HashMap<>();
++                for (var word : words) {
++                    if (word.isEmpty()) {
++                        continue;
++                    }
++                    word = word.toLowerCase();
++                    freqs.put(word, freqs.getOrDefault(word, 0) + 1);
++                }
++                for (String word : freqs.keySet()) {
++                    PageEntry pageEntry = new PageEntry(pdf.getName(), i, freqs.get(word));
++                    if (database.containsKey(word)) {
++                        database.get(word).add(pageEntry);
++                    } else {
++                        database.put(word, new ArrayList<>());
++                        database.get(word).add(pageEntry);
++                    }
++                }
++            }
++        }
+     }
+ 
+     @Override
+     public List<PageEntry> search(String word) {
+-        // тут реализуйте поиск по слову
+-        return Collections.emptyList();
++        List<PageEntry> result = database.get(word);
++        Collections.sort(result);
++        return result;
+     }
+ }
+Index: src/main/java/Main.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/Main.java b/src/main/java/Main.java
+--- a/src/main/java/Main.java	(revision 4283df5284fc88873b542ad36797317020560ca6)
++++ b/src/main/java/Main.java	(date 1689807045155)
+@@ -1,13 +1,24 @@
+-import java.io.File;
+-import java.util.Arrays;
+-
++import java.io.*;
++import java.net.ServerSocket;
++import java.net.Socket;
+ public class Main {
+-    public static void main(String[] args) throws Exception {
+-        BooleanSearchEngine engine = new BooleanSearchEngine(new File("pdfs"));
+-        System.out.println(engine.search("бизнес"));
+-
+-        // здесь создайте сервер, который отвечал бы на нужные запросы
+-        // слушать он должен порт 8989
+-        // отвечать на запросы /{word} -> возвращённое значение метода search(word) в JSON-формате
++    public static void main(String[] args) {
++        try (ServerSocket serverSocket = new ServerSocket(8989)) {
++            BooleanSearchEngine engine = new BooleanSearchEngine(new File("pdfs"));
++            while (true) {
++                try (
++                        Socket socket = serverSocket.accept();
++                        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
++                        PrintWriter out = new PrintWriter(socket.getOutputStream())
++                ) {
++                    String request = in.readLine();
++                    String answer = engine.search(request).toString();
++                    out.println(answer);
++                }
++            }
++        } catch (IOException e) {
++            System.out.println("Не могу стартовать сервер");
++            e.printStackTrace();
++        }
+     }
+-}
+\ No newline at end of file
++}
+Index: pom.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/pom.xml b/pom.xml
+--- a/pom.xml	(revision 4283df5284fc88873b542ad36797317020560ca6)
++++ b/pom.xml	(date 1689807045160)
+@@ -21,5 +21,10 @@
+             <version>7.1.15</version>
+             <type>pom</type>
+         </dependency>
++        <dependency>
++            <groupId>org.codehaus.jettison</groupId>
++            <artifactId>jettison</artifactId>
++            <version>1.5.4</version>
++        </dependency>
+     </dependencies>
+ </project>
+\ No newline at end of file
